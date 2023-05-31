@@ -1,6 +1,6 @@
 import { extname } from 'node:path'
 import type { ModuleInfo, PartialResolvedId } from 'rollup'
-import { isDirectCSSRequest } from '../plugins/css'
+import { isCSSRequest, isDirectCSSRequest } from '../plugins/css'
 import {
   cleanUrl,
   normalizePath,
@@ -46,6 +46,34 @@ export class ModuleNode {
       this.isSelfAccepting = false
     }
   }
+}
+
+function areAllImportsAccepted(
+  importedBindings: Set<string>,
+  acceptedExports: Set<string>,
+) {
+  for (const binding of importedBindings) {
+    if (!acceptedExports.has(binding)) {
+      return false
+    }
+  }
+  return true
+}
+
+export function isAcceptedForImporter(
+  mod: ModuleNode,
+  importer: ModuleNode,
+): boolean {
+  if (mod.id && mod.acceptedHmrExports && importer.importedBindings) {
+    const importedBindingsFromMod = importer.importedBindings.get(mod.id)
+    if (
+      importedBindingsFromMod &&
+      areAllImportsAccepted(importedBindingsFromMod, mod.acceptedHmrExports)
+    ) {
+      return true
+    }
+  }
+  return false
 }
 
 export type ResolvedUrl = [
@@ -126,6 +154,7 @@ export class ModuleGraph {
       return
     }
     seen.add(mod)
+
     if (isHmr) {
       mod.lastHMRTimestamp = timestamp
     } else {
@@ -139,10 +168,35 @@ export class ModuleGraph {
     mod.ssrTransformResult = null
     mod.ssrModule = null
     mod.ssrError = null
+
     mod.importers.forEach((importer) => {
-      if (!importer.acceptedHmrDeps.has(mod)) {
-        this.invalidateModule(importer, seen, timestamp, isHmr)
+      if (
+        // Invalidation of CSS "importers" cannot be avoided because in reality
+        // the "import" may represent a dependency on the whole "imported" module's
+        // code that will impact the generated CSS (e.g. Tailwind plugin).
+        !isCSSRequest(importer.url) &&
+        // #2457: Importers accepting the invalidating module should never be invalidated.
+        (importer.acceptedHmrDeps.has(mod) ||
+          // Importers of self accepting modules don't need to be invalidated
+          // because, as per HMR contract, accepted modules are expected to work
+          // with importers that are linked to different runtime versions (i.e.
+          // URL) of them. On the contrary it must be avoided because, in case
+          // of circular dependencies, this will break the runtime state by
+          // loading new versions of HMR enabled modules without calling their
+          // HMR handlers.
+          mod.isSelfAccepting ||
+          isAcceptedForImporter(mod, importer))
+      ) {
+        return
       }
+
+      this.invalidateModule(
+        importer,
+        seen,
+        timestamp,
+        isHmr,
+        // isHmr && !isAcceptedForImporter(mod, importer),
+      )
     })
   }
 

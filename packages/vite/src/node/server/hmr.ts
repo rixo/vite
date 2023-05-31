@@ -10,7 +10,7 @@ import type { ViteDevServer } from '..'
 import { isCSSRequest } from '../plugins/css'
 import { getAffectedGlobModules } from '../plugins/importMetaGlob'
 import { isExplicitImportRequired } from '../plugins/importAnalysis'
-import type { ModuleNode } from './moduleGraph'
+import { type ModuleNode, isAcceptedForImporter } from './moduleGraph'
 
 export const debugHmr = createDebugger('vite:hmr')
 
@@ -215,18 +215,6 @@ export async function handleFileAddUnlink(
   }
 }
 
-function areAllImportsAccepted(
-  importedBindings: Set<string>,
-  acceptedExports: Set<string>,
-) {
-  for (const binding of importedBindings) {
-    if (!acceptedExports.has(binding)) {
-      return false
-    }
-  }
-  return true
-}
-
 function propagateUpdate(
   node: ModuleNode,
   traversedModules: Set<ModuleNode>,
@@ -299,14 +287,8 @@ function propagateUpdate(
       continue
     }
 
-    if (node.id && node.acceptedHmrExports && importer.importedBindings) {
-      const importedBindingsFromNode = importer.importedBindings.get(node.id)
-      if (
-        importedBindingsFromNode &&
-        areAllImportsAccepted(importedBindingsFromNode, node.acceptedHmrExports)
-      ) {
-        continue
-      }
+    if (isAcceptedForImporter(node, importer)) {
+      continue
     }
 
     if (currentChain.includes(importer)) {

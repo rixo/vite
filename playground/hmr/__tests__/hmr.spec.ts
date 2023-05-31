@@ -19,6 +19,9 @@ test('should render', async () => {
 })
 
 if (!isBuild) {
+  const HOT_UPDATED = /hot updated/
+  const CONNECTED = /connected/
+
   test('should connect', async () => {
     expect(browserLogs.length).toBe(3)
     expect(browserLogs.some((msg) => msg.match('connected'))).toBe(true)
@@ -289,9 +292,6 @@ if (!isBuild) {
   })
 
   describe('acceptExports', () => {
-    const HOT_UPDATED = /hot updated/
-    const CONNECTED = /connected/
-
     const baseDir = 'accept-exports'
 
     describe('when all used exports are accepted', () => {
@@ -648,6 +648,33 @@ if (!isBuild) {
 
       describe('dynamic import(...)', () => testStarExports('dynamic-imports'))
     })
+
+    test('circular dependencies', async () => {
+      const testDir = baseDir + '/circular-deps'
+
+      await untilBrowserLogAfter(
+        () => page.goto(`${viteTestUrl}/${testDir}/`),
+        [CONNECTED, />>>/],
+        (logs) => {
+          expect(logs).toContain('child > 1')
+        },
+      )
+
+      await untilBrowserLogAfter(
+        () => {
+          editFile(`${testDir}/child.ts`, (code) =>
+            code.replace('child >', 'child >>'),
+          )
+        },
+        HOT_UPDATED,
+        (logs) => {
+          expect(logs).toEqual([
+            'child >> 1',
+            `[vite] hot updated: /${testDir}/child.ts`,
+          ])
+        },
+      )
+    })
   })
 
   test('css in html hmr', async () => {
@@ -785,5 +812,32 @@ if (import.meta.hot) {
       '(optional-chaining) child update',
     )
     await untilUpdated(() => el.textContent(), '2')
+  })
+
+  test("circular dependencies don't cause extraneous module loads", async () => {
+    const testDir = 'circular-deps'
+
+    await untilBrowserLogAfter(
+      () => page.goto(`${viteTestUrl}/${testDir}/`),
+      [CONNECTED, />>>/],
+      (logs) => {
+        expect(logs).toContain('child > 1')
+      },
+    )
+
+    await untilBrowserLogAfter(
+      () => {
+        editFile(`${testDir}/child.ts`, (code) =>
+          code.replace('child >', 'child >>'),
+        )
+      },
+      HOT_UPDATED,
+      (logs) => {
+        expect(logs).toEqual([
+          'child >> 1',
+          `[vite] hot updated: /${testDir}/child.ts`,
+        ])
+      },
+    )
   })
 }
